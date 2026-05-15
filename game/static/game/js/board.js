@@ -638,9 +638,33 @@
                     return;
                 }
                 await executeMove(fr, fc, tr, tc, null);
-            }
-
-            async function executeMove(fr, fc, tr, tc, promotionPiece, skipAnimation = false) {
+            }            let reconnecting = false;
+            async function handleReconnect() {
+                if (reconnecting) return;
+                reconnecting = true;
+                showStatus('Reconnecting...', false);
+                let retries = 0;
+                let success = false;
+                while (retries < 3 && !success) {
+                    try {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
+                        await loadGame();
+                        success = true;
+                    } catch (err) {
+                        retries++;
+                    }
+                }
+                
+                if (success) {
+                    showStatus('Connection restored', false);
+                    setTimeout(() => {
+                        showStatus('', false);
+                    }, 2000);
+                } else {
+                    showStatus('Unable to reconnect. Please refresh.', true);
+                }
+                reconnecting = false;
+            }async function executeMove(fr, fc, tr, tc, promotionPiece, skipAnimation = false) {
                 try {
                     const body = {
                         from_row: fr, from_col: fc,
@@ -701,7 +725,7 @@
                         deselect();
                     }
                 } catch (e) {
-                    showStatus('Connection error.', true);
+                        await handleReconnect();
                 }
             }
 
@@ -752,7 +776,8 @@
                         showStatus(data.message, true);
                     }
                 } catch (e) {
-                    showStatus('AI connection error.', true);
+                   
+                        await handleReconnect();
                 } finally {
                     aiThinking = false;
                 }
@@ -1584,7 +1609,89 @@
                 };
             });
 
-            document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
+    document.addEventListener('visibilitychange', async() => {
+        if (document.hidden) {
+            pauseGame().catch(() => {});
+        } else {
+            await handleReconnect();
+        }
+    });
+
+    window.addEventListener('online', async () => {
+        if (!gameOver) {
+            await handleReconnect();
+        }
+    });
+            const manualMoveInput = document.getElementById('manualMoveInput');
+            const manualMoveError = document.getElementById('manualMoveError');
+
+            if (manualMoveInput) {
+                manualMoveInput.addEventListener('keydown', async (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const val = manualMoveInput.value.trim().toLowerCase();
+                        if (!val) return;
+                        
+                        const match = val.match(/^([a-h])([1-8])([a-h])([1-8])([qrbn])?$/);
+                        if (!match) {
+                            if (manualMoveError) {
+                                manualMoveError.textContent = 'Invalid format (e.g. e2e4)';
+                                manualMoveError.style.display = 'block';
+                            }
+                            return;
+                        }
+                        
+                        if (manualMoveError) manualMoveError.style.display = 'none';
+                        const files = ['a','b','c','d','e','f','g','h'];
+                        const ranks = ['8','7','6','5','4','3','2','1'];
+                        
+                        const fc = files.indexOf(match[1]);
+                        const fr = ranks.indexOf(match[2]);
+                        const tc = files.indexOf(match[3]);
+                        const tr = ranks.indexOf(match[4]);
+                        const promo = match[5] || null;
+                        
+                        if (paused || gameOver) {
+                            if (manualMoveError) {
+                                manualMoveError.textContent = 'Game is not active';
+                                manualMoveError.style.display = 'block';
+                            }
+                            return;
+                        }
+                        if (gameMode === 'ai' && turn !== playerColor) {
+                            if (manualMoveError) {
+                                manualMoveError.textContent = 'Not your turn';
+                                manualMoveError.style.display = 'block';
+                            }
+                            return;
+                        }
+                        const p = board[fr][fc];
+                        if (!p || pColor(p) !== turn) {
+                            if (manualMoveError) {
+                                manualMoveError.textContent = 'Invalid piece';
+                                manualMoveError.style.display = 'block';
+                            }
+                            return;
+                        }
+                        
+                        if (isPromotionMove(fr, fc, tr) && !promo) {
+                            if (manualMoveError) {
+                                manualMoveError.textContent = 'Promotion piece required (e.g. e7e8q)';
+                                manualMoveError.style.display = 'block';
+                            }
+                            return;
+                        }
+                        
+                        manualMoveInput.value = '';
+                        await executeMove(fr, fc, tr, tc, promo);
+                    }
+                });
+                
+                manualMoveInput.addEventListener('input', () => {
+                    if (manualMoveError) manualMoveError.style.display = 'none';
+                });
+            }
+
             document.addEventListener('keydown', e => {
                 if (e.repeat) return;
 
